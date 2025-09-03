@@ -25,69 +25,30 @@ La fusione di queste discipline nel DFIR riconosce che, nel mondo reale, l'anali
 
 \subsection{Fasi del processo DFIR}
 
-Il processo DFIR segue un approccio strutturato che può essere suddiviso in sei fasi principali, come definito dal framework NIST SP 800-61 \cite{cichonski2012}. Mentre queste fasi forniscono una struttura logica, è importante comprendere che nella pratica spesso si sovrappongono e richiedono iterazioni multiple.
+Il processo DFIR segue un approccio metodologico articolato in sei fasi distinte, come definito dal framework NIST SP 800-61 \cite{cichonski2012}. Sebbene questa struttura fornisca un modello logico di riferimento, nella pratica operativa le fasi si sovrappongono frequentemente e richiedono un approccio iterativo, dove l'analisi forense permea trasversalmente l'intero processo fornendo le informazioni necessarie per decisioni informate in ogni momento.
 
 \begin{figure}[ht]
     \centering
     \includegraphics[width=0.6\linewidth]{images/stato-arte/digital-forensics-incident-response-plan-flow.png}
 \end{figure}
 
-\paragraph{1. Preparazione (Preparation)}
-La fase più critica e paradossalmente più trascurata del processo DFIR. Un'organizzazione ben preparata può rispondere a un incidente in ore invece che in giorni. La preparazione include:
-\begin{itemize}
-    \item Sviluppo di playbook e procedure operative standard (SOP) per scenari comuni
-    \item Configurazione di strumenti e infrastrutture di analisi prima che servano
-    \item Training regolare del personale attraverso simulazioni realistiche di incidenti
-    \item Implementazione di meccanismi di logging e monitoraggio pervasivi
-    \item Predisposizione di capacità di acquisizione forense ready-to-use
-\end{itemize}
+\paragraph{1. Preparazione}
+La preparazione rappresenta il fondamento dell'intero processo DFIR, determinando la differenza tra una risposta efficace in poche ore e una gestione caotica che può protrarsi per giorni. Questa fase richiede lo sviluppo preventivo di playbook e procedure operative standard per scenari ricorrenti, supportati da un'infrastruttura tecnologica adeguata. L'implementazione di meccanismi di logging pervasivi e la predisposizione di capacità di acquisizione forense immediatamente disponibili costituiscono prerequisiti essenziali. Parallelamente, il training continuo del personale attraverso simulazioni realistiche garantisce la prontezza operativa quando l'incidente si verifica.
 
-\paragraph{2. Identificazione (Detection)}
-Il rilevamento tempestivo e l'accurata identificazione di un incidente possono fare la differenza tra un minor inconveniente e una catastrofe aziendale. Questa fase richiede:
-\begin{itemize}
-    \item Analisi degli alert provenienti da molteplici sistemi di sicurezza
-    \item Triage iniziale per distinguere falsi positivi da minacce reali
-    \item Determinazione dello scope iniziale e della potenziale gravità
-    \item Attivazione del team di risposta con le competenze appropriate
-\end{itemize}
+\paragraph{2. Identificazione}
+Il rilevamento tempestivo di un incidente può trasformare una potenziale catastrofe aziendale in un inconveniente gestibile. Questa fase inizia con l'analisi degli alert provenienti dai sistemi di sicurezza, seguita da un processo di triage che distingue i falsi positivi dalle minacce concrete. La determinazione accurata dello scope iniziale e della gravità potenziale permette l'attivazione mirata del team di risposta con le competenze specifiche richieste dalla situazione.
 
-\paragraph{3. Contenimento (Containment)}
-Una volta confermato l'incidente, il contenimento diventa prioritario per limitare i danni. Si articola in due approcci complementari:
-\begin{itemize}
-    \item \textit{Contenimento a breve termine}: Azioni immediate come isolare sistemi compromessi dalla rete
-    \item \textit{Contenimento a lungo termine}: Misure sostenibili come applicazione di patch temporanee mentre si prepara l'eradicazione completa
-    \item Backup forensi dei sistemi affetti prima di qualsiasi modifica
-    \item Documentazione meticolosa di ogni azione per preservare la chain of custody
-\end{itemize}
+\paragraph{3. Contenimento}
+Una volta confermato l'incidente, il contenimento diventa prioritario per limitare la propagazione del danno. L'approccio si articola su due livelli temporali complementari: le azioni immediate di contenimento a breve termine, come l'isolamento dei sistemi compromessi, e le misure sostenibili a lungo termine, che includono l'applicazione di patch temporanee mentre si prepara l'eradicazione definitiva. Cruciale in questa fase è l'acquisizione di backup forensi prima di qualsiasi modifica, accompagnata da una documentazione meticolosa per preservare la chain of custody.
 
-\paragraph{4. Eradicazione (Eradication)}
-La rimozione completa della minaccia richiede precisione chirurgica per evitare che l'incidente si ripresenti:
-\begin{itemize}
-    \item Identificazione e rimozione di tutti gli artefatti malevoli, inclusi backdoor nascoste
-    \item Chiusura definitiva delle vulnerabilità sfruttate dall'attaccante
-    \item Rafforzamento delle difese per prevenire tecniche simili in futuro
-    \item Verifica dell'assenza di persistence mechanisms lasciati dall'attaccante
-\end{itemize}
+\paragraph{4. Eradicazione}
+L'eliminazione completa della minaccia richiede un approccio sistematico che va oltre la semplice rimozione degli artefatti visibili. L'identificazione di tutti i componenti malevoli, incluse backdoor e meccanismi di persistenza nascosti, deve essere seguita dalla chiusura definitiva delle vulnerabilità sfruttate. Il rafforzamento delle difese in questa fase non si limita alla remediation immediata, ma include misure preventive contro tecniche di attacco simili.
 
-\paragraph{5. Recupero (Recovery)}
-Il ripristino delle operazioni normali deve essere gestito con cautela per evitare la reintroduzione della minaccia:
-\begin{itemize}
-    \item Ricostruzione dei sistemi da backup verificati puliti
-    \item Monitoraggio intensificato per settimane per rilevare eventuali ricomparse
-    \item Validazione sistematica del ripristino di tutte le funzionalità business-critical
-    \item Implementazione di controlli compensativi temporanei dove necessario
-\end{itemize}
+\paragraph{5. Recupero}
+Il ripristino delle operazioni normali rappresenta una fase delicata dove la fretta può vanificare gli sforzi precedenti. La ricostruzione dei sistemi deve partire esclusivamente da backup verificati e puliti, accompagnata da un monitoraggio intensificato che si protrae per settimane. La validazione sistematica del ripristino delle funzionalità business-critical e l'implementazione di controlli compensativi temporanei assicurano la continuità operativa mentre si consolida la sicurezza dell'ambiente.
 
 \paragraph{6. Lessons Learned}
-Spesso trascurata per la fretta di "chiudere" l'incidente, questa fase è cruciale per il miglioramento continuo:
-\begin{itemize}
-    \item Documentazione dettagliata dell'intero incidente e della risposta
-    \item Identificazione onesta di cosa ha funzionato e cosa no
-    \item Aggiornamento di procedure, playbook e training basato sull'esperienza
-    \item Condivisione di IOC e lessons learned con la community (nei limiti della confidenzialità)
-\end{itemize}
-
-È fondamentale comprendere che l'analisi forense non è confinata a una singola fase ma permea l'intero processo, fornendo le informazioni necessarie per decisioni informate in ogni momento.
+La fase conclusiva, troppo spesso sacrificata alla pressione di considerare l'incidente "chiuso", rappresenta invece l'opportunità fondamentale per il miglioramento continuo. La documentazione dettagliata dell'intero evento e l'analisi critica della risposta permettono di identificare punti di forza e debolezza del processo. L'aggiornamento di procedure e playbook basato sull'esperienza acquisita, insieme alla condivisione responsabile di IOC e lessons learned con la community, trasforma ogni incidente in un'opportunità di crescita per l'organizzazione e per l'ecosistema di sicurezza nel suo complesso.
 
 \subsection{Importanza nell'ambito della cybersecurity moderna}
 
@@ -175,7 +136,7 @@ La memoria contiene segreti che esistono decifrati solo durante l'uso attivo:
 \end{itemize}
 
 \paragraph{4. Evidenze di malware}
-La memoria è spesso l'unico posto dove malware sofisticati esistono in forma analizzabile:
+La memoria è spesso l'unico posto dove i malware sofisticati esistono in forma analizzabile:
 \begin{itemize}
     \item Codice iniettato in processi legittimi tramite process injection
     \item API hooks e modifiche alle system call table per intercettare chiamate
@@ -197,7 +158,7 @@ L'interazione dell'utente con il sistema lascia tracce effimere ma rivelatrici:
 \end{itemize}
 
 \paragraph{6. Metadati di sistema}
-Strutture di sistema che forniscono contesto cruciale per l'investigazione:
+Strutture di sistema che forniscono contesto cruciale per l\'investigazione:
 \begin{itemize}
     \item Registry hives caricati con chiavi e valori correnti
     \item Event log entries non ancora flushati su disco
