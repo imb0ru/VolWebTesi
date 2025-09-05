@@ -69,7 +69,7 @@ docker-compose up -d
 
 La containerizzazione offre vantaggi significativi per la riproducibilità e la portabilità, garantendo che gli stessi container possano essere deployati in ambiente di sviluppo, test e produzione con comportamento consistente.
 
-\section{Workflow Operativo}
+\section{Workflow Operativo e Gestione}
 
 \subsection{Gestione dei casi}
 
@@ -82,7 +82,7 @@ Il workflow operativo di VolWeb inizia con la creazione di un caso, che rapprese
 
 L'interfaccia di gestione presenta una dashboard che fornisce una vista immediata dello stato delle investigazioni. Ogni caso è rappresentato da una card che mostra informazioni essenziali: nome, descrizione, numero di evidenze associate, stato dell'analisi e ultima modifica. Questa presentazione visiva permette agli analisti di prioritizzare rapidamente il proprio lavoro e identificare casi che richiedono attenzione immediata.
 
-\subsection{Upload delle evidenze}
+\subsection{Upload e Gestione dei Dump di Memoria}
 
 Una volta creato un caso, il passo successivo è l'upload dei dump di memoria da analizzare. VolWeb gestisce questo processo critico con particolare attenzione all'integrità dei dati e all'esperienza utente. L'interfaccia di upload supporta drag-and-drop, permettendo agli utenti di trascinare file direttamente dal file manager del sistema operativo.
 
@@ -91,7 +91,11 @@ Una volta creato un caso, il passo successivo è l'upload dei dump di memoria da
     \includegraphics[width=0.9\linewidth]{images/volweb-original/volweb-upload-interface.png}
 \end{figure}
 
+La gestione di file di grandi dimensioni rappresenta una sfida tecnica significativa in un'applicazione web. I dump di memoria possono facilmente superare i 10 GB, dimensioni che mettono alla prova sia l'infrastruttura di rete che i meccanismi standard di upload HTTP. VolWeb affronta questa sfida attraverso un sistema sofisticato di gestione che combina upload chunked, validazione dell'integrità e rilevamento automatico del profilo.
+
 Per file di grandi dimensioni, comune scenario con dump di memoria che possono superare i 16GB, VolWeb implementa un sistema di upload chunked. Questo approccio divide il file in blocchi più piccoli che vengono trasmessi sequenzialmente, con la possibilità di riprendere l'upload in caso di interruzione della connessione. Il backend gestisce l'assemblaggio dei chunk e la validazione dell'integrità attraverso hash crittografici, mantenendo metadati dettagliati su ogni file inclusi hash multipli per la verifica dell'integrità e timestamp per la chain of custody.
+
+Uno degli aspetti più innovativi di VolWeb è il sistema di rilevamento automatico del profilo del sistema operativo. Questo processo, tradizionalmente manuale e soggetto a errori, viene automatizzato attraverso l'analisi delle strutture dati presenti nel dump. Il sistema esamina prima signature ad alta confidenza che permettono l'identificazione immediata. Se queste non producono risultati, procede con euristiche più complesse che analizzano pattern di strutture dati. Come fallback finale, l'utente può specificare manualmente il profilo, ma nella pratica questo è raramente necessario.
 
 \subsection{Analisi automatica}
 
@@ -101,16 +105,39 @@ La selezione di questi plugin non è casuale ma deriva dall'esperienza operativa
 
 Durante l'analisi, VolWeb fornisce feedback dettagliato attraverso WebSocket, mostrando quale plugin è in esecuzione, la percentuale di completamento e eventuali warning o errori. Questo feedback real-time è cruciale per mantenere la fiducia dell'utente durante operazioni che possono richiedere tempo significativo.
 
-\subsection{Risultati e visualizzazioni}
+\section{Interfaccia Utente e Visualizzazioni}
+
+\subsection{Design dell'interfaccia}
+
+L'interfaccia di VolWeb rappresenta un departure significativo dall'approccio command-line tradizionale di Volatility. Il design, basato sui principi del Material Design, prioritizza la chiarezza e l'efficienza operativa. La dashboard principale presenta una vista d'insieme dei casi attivi, permettendo all'analista di comprendere immediatamente lo stato delle investigazioni in corso.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{images/volweb-original/volweb-dashboard.png}
+\end{figure}
+
+La navigazione segue una struttura gerarchica naturale: dalla lista dei casi si accede ai dettagli del singolo caso, da cui è possibile esplorare le evidenze associate e i risultati delle analisi. Questa struttura, apparentemente semplice, nasconde una considerevole complessità nell'orchestrazione dei componenti React che gestiscono lo stato dell'applicazione.
+
+L'uso estensivo di feedback visivo mantiene l'utente informato sullo stato delle operazioni. Progress bar per upload e analisi, notifiche per il completamento di task e indicatori di stato per ogni componente contribuiscono a creare un'esperienza utente che minimizza l'incertezza e l'ansia tipiche delle operazioni di lunga durata.
+
+\subsection{Visualizzazione dei risultati}
 
 La presentazione efficace dei risultati rappresenta uno dei maggiori valori aggiunti di VolWeb rispetto all'uso diretto di Volatility. Invece di output testuali densi, VolWeb trasforma i dati in visualizzazioni interattive che facilitano l'identificazione di anomalie e pattern sospetti.
+
+La presentazione dei risultati dell'analisi rappresenta una delle sfide principali nel design di VolWeb. I plugin di Volatility producono output eterogenei, da semplici liste a strutture dati complesse. VolWeb implementa renderer specializzati per i tipi di dati più comuni, trasformando tabelle di testo in visualizzazioni interattive.
+
+\subsubsection{Visualizzazione dei processi}
+
+La vista dei processi utilizza una rappresentazione ad albero che mostra chiaramente le relazioni parent-child tra processi. I processi orfani o con parent inusuali sono evidenziati visualmente, permettendo l'identificazione rapida di potenziali indicatori di compromissione. Ogni nodo dell'albero è espandibile per rivelare dettagli aggiuntivi come PID, tempo di creazione, numero di thread e handle, e spazio di memoria utilizzato.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=1\linewidth]{images/volweb-original/volweb-process-tree.png}
 \end{figure}
 
-La vista dei processi utilizza una rappresentazione ad albero che mostra chiaramente le relazioni parent-child tra processi. I processi orfani o con parent inusuali sono evidenziati visualmente, permettendo l'identificazione rapida di potenziali indicatori di compromissione. Ogni nodo dell'albero è espandibile per rivelare dettagli aggiuntivi come PID, tempo di creazione, numero di thread e handle, e spazio di memoria utilizzato.
+Per i dati di processo, il sistema presenta una vista tabellare arricchita che permette sorting, filtering e ricerca full-text. Ogni processo è cliccabile per accedere a una vista dettagliata che aggrega informazioni da multipli plugin correlati. Questa aggregazione, invisibile all'utente, richiede una logica complessa per correlare dati provenienti da plugin diversi basandosi su identificatori comuni come PID e offset di memoria.
+
+\subsubsection{Visualizzazione delle connessioni di rete}
 
 Per le connessioni di rete, VolWeb offre multiple viste complementari. La vista tabellare fornisce tutti i dettagli tecnici: processo proprietario, protocollo, indirizzi IP e porte locali e remote, stato della connessione. La vista grafica, basata su D3.js, visualizza le connessioni come un grafo interattivo dove i nodi rappresentano processi ed endpoint, mentre gli archi indicano le connessioni attive.
 
@@ -118,6 +145,10 @@ Per le connessioni di rete, VolWeb offre multiple viste complementari. La vista 
     \centering
     \includegraphics[width=0.9\linewidth]{images/volweb-original/volweb-network-graph.png}
 \end{figure}
+
+Le informazioni di rete sono presentate attraverso una combinazione di viste tabellari e visualizzazioni grafiche. La vista tabellare permette un'analisi dettagliata di ogni connessione, mentre la visualizzazione grafica offre una comprensione immediata delle relazioni tra processi e endpoint remoti.
+
+\subsubsection{Sistema di ricerca}
 
 Con dump di memoria che possono contenere informazioni su centinaia di processi e migliaia di artefatti, la capacità di ricerca efficace diventa critica. VolWeb implementa un motore di ricerca che supporta query sia semplici che complesse, permettendo agli analisti di trovare rapidamente informazioni rilevanti. La ricerca full-text opera su tutti i campi dei risultati, permettendo di trovare rapidamente riferimenti a file specifici, indirizzi IP, o stringhe sospette. Il sistema supporta inoltre filtering avanzato per tipo di dato, permettendo per esempio di visualizzare solo i processi che hanno connessioni di rete attive o solo le DLL caricate da percorsi non standard.
 
@@ -142,41 +173,11 @@ VolWeb espone una API REST completa che permette l'automazione e l'integrazione 
 
 Gli endpoint principali includono la gestione dei casi con creazione, modifica e cancellazione, la gestione delle evidenze con upload, download e metadata, l'esecuzione dei plugin con selezione, parametrizzazione e monitoraggio, e il recupero dei risultati con filtering, paginazione ed export. Questa esposizione attraverso API standardizzate trasforma VolWeb in un componente integrabile in pipeline di analisi più ampie, permettendo l'automazione di workflow complessi.
 
-\subsection{Gestione dei Dump di Memoria}
-
-La gestione di file di grandi dimensioni rappresenta una sfida tecnica significativa in un'applicazione web. I dump di memoria possono facilmente superare i 10 GB, dimensioni che mettono alla prova sia l'infrastruttura di rete che i meccanismi standard di upload HTTP. VolWeb affronta questa sfida attraverso un sistema sofisticato di gestione che combina upload chunked, validazione dell'integrità e rilevamento automatico del profilo.
-
-Uno degli aspetti più innovativi di VolWeb è il sistema di rilevamento automatico del profilo del sistema operativo. Questo processo, tradizionalmente manuale e soggetto a errori, viene automatizzato attraverso l'analisi delle strutture dati presenti nel dump. Il sistema esamina prima signature ad alta confidenza che permettono l'identificazione immediata. Se queste non producono risultati, procede con euristiche più complesse che analizzano pattern di strutture dati. Come fallback finale, l'utente può specificare manualmente il profilo, ma nella pratica questo è raramente necessario.
-
 \subsection{Sicurezza e Controllo degli Accessi}
 
 La sicurezza in VolWeb è implementata a più livelli, partendo da un robusto sistema di autenticazione basato sul framework di Django. Gli utenti devono autenticarsi per accedere a qualsiasi funzionalità, e le sessioni sono gestite in modo sicuro con token che scadono dopo un periodo di inattività configurabile.
 
 Il sistema di autorizzazione implementa un modello di permessi granulare. Gli utenti possono avere ruoli diversi con capacità appropriate: amministratori con accesso completo, analisti con capacità di creare e gestire casi, e viewer con accesso in sola lettura. A livello di caso, è possibile definire permessi specifici, permettendo la condivisione selettiva di investigazioni tra team diversi mantenendo la segregazione di informazioni sensibili.
-
-\section{Interfaccia Utente}
-
-\subsection{Design dell'interfaccia}
-
-L'interfaccia di VolWeb rappresenta un departure significativo dall'approccio command-line tradizionale di Volatility. Il design, basato sui principi del Material Design, prioritizza la chiarezza e l'efficienza operativa. La dashboard principale presenta una vista d'insieme dei casi attivi, permettendo all'analista di comprendere immediatamente lo stato delle investigazioni in corso.
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=1\linewidth]{images/volweb-original/volweb-dashboard.png}
-\end{figure}
-
-La navigazione segue una struttura gerarchica naturale: dalla lista dei casi si accede ai dettagli del singolo caso, da cui è possibile esplorare le evidenze associate e i risultati delle analisi. Questa struttura, apparentemente semplice, nasconde una considerevole complessità nell'orchestrazione dei componenti React che gestiscono lo stato dell'applicazione.
-
-L'uso estensivo di feedback visivo mantiene l'utente informato sullo stato delle operazioni. Progress bar per upload e analisi, notifiche per il completamento di task e indicatori di stato per ogni componente contribuiscono a creare un'esperienza utente che minimizza l'incertezza e l'ansia tipiche delle operazioni di lunga durata.
-
-\subsection{Visualizzazione dei risultati}
-
-La presentazione dei risultati dell'analisi rappresenta una delle sfide principali nel design di VolWeb. I plugin di Volatility producono output eterogenei, da semplici liste a strutture dati complesse. VolWeb implementa renderer specializzati per i tipi di dati più comuni, trasformando tabelle di testo in visualizzazioni interattive.
-
-Per i dati di processo, il sistema presenta una vista tabellare arricchita che permette sorting, filtering e ricerca full-text. Ogni processo è cliccabile per accedere a una vista dettagliata che aggrega informazioni da multipli plugin correlati. Questa aggregazione, invisibile all'utente, richiede una logica complessa per correlare dati provenienti da plugin diversi basandosi su identificatori comuni come PID e offset di memoria.
-
-Le informazioni di rete sono presentate attraverso una combinazione di viste tabellari e visualizzazioni grafiche. La vista tabellare permette un'analisi dettagliata di ogni connessione, mentre la visualizzazione grafica offre una comprensione immediata delle relazioni tra processi e endpoint remoti.
-
 \section{Limitazioni e Considerazioni}
 
 Nonostante le capacità significative, la versione originale di VolWeb presenta alcune limitazioni importanti. L'assenza di supporto per YARA rappresenta probabilmente la mancanza più significativa, limitando le capacità di threat hunting della piattaforma. Questa limitazione impedisce l'implementazione di capacità di pattern matching avanzate necessarie per identificare minacce custom o varianti di malware conosciuti, una funzionalità critica in contesti operativi moderni dove le minacce evolvono rapidamente.
