@@ -20,9 +20,9 @@ Un aspetto critico emerso durante l'esercitazione riguarda la resilienza dell'in
 
 \subsection{Identificazione delle aree di miglioramento}
 
-Basandosi sull'analisi delle limitazioni e sull'esperienza operativa, sono state identificate due aree principali di miglioramento che guidano lo sviluppo delle espansioni:
+Basandosi sull'analisi delle limitazioni e sull'esperienza operativa, sono state identificate due aree principali di miglioramento che guidano lo sviluppo delle espansioni.
 
-La prima e più critica area riguarda l'integrazione di YARA per fornire capacità di pattern matching e threat hunting. Questa integrazione deve permettere agli analisti di caricare e gestire rule files, organizzarli in rulesets logici, eseguire scansioni e visualizzare i risultati con contesto forense appropriato.
+La prima e più critica area riguarda l'integrazione di YARA per fornire capacità di pattern matching e threat hunting. Questa integrazione deve permettere agli analisti di caricare e gestire rule files, organizzarli in rulesets logici, eseguire scansioni e visualizzare i risultati con contesto forense appropriato. Il sistema deve inoltre supportare la validazione automatica delle regole al momento del caricamento, garantendo che solo regole sintatticamente corrette vengano applicate durante le analisi.
 
 La seconda area si concentra sulla semplificazione dell'architettura rimuovendo componenti non essenziali. L'eliminazione del sistema di autenticazione e del supporto cloud storage riduce la complessità del deployment e manutenzione, permettendo agli analisti di concentrarsi sulle funzionalità core di analisi forense. Questa semplificazione garantisce inoltre maggiore resilienza operativa, eliminando dipendenze esterne che potrebbero diventare non disponibili proprio durante incidenti critici.
 
@@ -816,17 +816,23 @@ La visualizzazione dei risultati delle scansioni YARA rappresenta un componente 
 
 
 \section{Semplificazioni Architetturali}
+
 Parallelamente all'integrazione YARA, sono state implementate semplificazioni architetturali significative basate sull'esperienza operativa di Locked Shields 2025.
 
 \subsection{Rimozione del Sistema di Autenticazione}
-L'eliminazione del layer di autenticazione rappresenta una decisione progettuale guidata dall'analisi del contesto operativo reale di VolWeb. Durante Locked Shields 2025, ogni blue team operava in un ambiente di rete completamente isolato, dove il controllo degli accessi era demandato all’infrastruttura e non all’applicazione. In questo scenario, la presenza di un sistema di autenticazione non solo introduceva overhead inutile, ma costituiva un vero e proprio punto debole sfruttabile dagli attaccanti.
 
-Infatti, uno degli aspetti più critici emersi durante l’esercitazione è stata proprio la gestione delle credenziali: password statiche o mal protette diventavano bersagli facili di attacchi di brute-force e credential stuffing, compromettendo rapidamente la piattaforma e annullando i benefici di una barriera applicativa.
+L'eliminazione del layer di autenticazione rappresenta una decisione progettuale guidata dall'analisi del contesto operativo reale di VolWeb. Durante Locked Shields 2025, ogni blue team operava in un ambiente di rete completamente isolato, dove il controllo degli accessi era demandato all'infrastruttura e non all'applicazione. In questo scenario, la presenza di un sistema di autenticazione non solo introduceva overhead inutile, ma costituiva un vero e proprio punto debole sfruttabile dagli attaccanti.
 
-La rimozione dell’autenticazione ha quindi portato vantaggi immediati: deployment più rapido e semplice, meno complessità operativa per gli analisti e un modello architetturale semplificato, libero da dipendenze legate alla gestione utenti e sessioni. Dal punto di vista della sicurezza, ha permesso di eliminare un’intera classe di vulnerabilità relative a password, hash e gestione dei token, riducendo drasticamente la superficie di attacco. Anche la configurazione risulta più snella, senza bisogno di secret keys, expiration policies o meccanismi di recovery.
+L'esperienza sul campo ha dimostrato che le password statiche o mal protette diventavano rapidamente bersagli di attacchi di brute-force e credential stuffing, compromettendo la piattaforma e annullando i benefici di una barriera applicativa. La rimozione dell'autenticazione ha portato vantaggi immediati in termini di deployment più rapido e semplice, minore complessità operativa per gli analisti e un modello architetturale semplificato. Dal punto di vista della sicurezza, questa scelta ha permesso di eliminare un'intera classe di vulnerabilità relative a password, hash e gestione dei token, riducendo drasticamente la superficie di attacco e semplificando la configurazione senza necessità di secret keys, expiration policies o meccanismi di recovery.
 
 \subsection{Eliminazione del Supporto Cloud Storage}
+
 La rimozione del supporto per storage cloud (S3) deriva da considerazioni sia di sicurezza che di affidabilità operativa emerse durante Locked Shields. I dump di memoria contengono per natura dati estremamente sensibili, inclusi potenziali segreti aziendali, credenziali in chiaro, e informazioni personali. L'upload di tali dati su infrastrutture cloud introduce rischi di compliance e sicurezza che molte organizzazioni non possono accettare.
-Durante l'esercitazione, è emerso inoltre che i servizi cloud rappresentavano spesso target primari per gli attacchi del red team. Affidarsi a storage cloud per evidenze forensi critiche introduce un single point of failure inaccettabile: proprio nel momento di maggior necessità durante un incident, l'infrastruttura cloud potrebbe essere compromessa, sotto attacco DDoS, o semplicemente non raggiungibile a causa di problemi di rete.
-La scelta di mantenere tutto lo storage locale garantisce che le evidenze rimangano sempre sotto il controllo diretto dell'organizzazione, accessibili anche in caso di isolamento completo della rete. Questo approccio si allinea con i principi di resilienza operativa essenziali per tool di incident response, dove la disponibilità delle evidenze non può dipendere da fattori esterni.
-L'eliminazione del supporto cloud ha inoltre semplificato significativamente l'architettura, rimuovendo la necessità di gestire credenziali AWS, implementare logiche di retry per operazioni di rete, o gestire la sincronizzazione tra storage locale e remoto.
+
+Durante l'esercitazione, è emerso inoltre che i servizi cloud rappresentavano spesso target primari per gli attacchi del red team. Affidarsi a storage cloud per evidenze forensi critiche introduce un single point of failure inaccettabile: proprio nel momento di maggior necessità durante un incident, l'infrastruttura cloud potrebbe essere compromessa, sotto attacco DDoS, o semplicemente non raggiungibile a causa di problemi di rete. 
+
+La scelta di mantenere tutto lo storage locale garantisce che le evidenze rimangano sempre sotto il controllo diretto dell'organizzazione, accessibili anche in caso di isolamento completo della rete. Questo approccio si allinea con i principi di resilienza operativa essenziali per tool di incident response, dove la disponibilità delle evidenze non può dipendere da fattori esterni. L'eliminazione del supporto cloud ha inoltre semplificato significativamente l'architettura, rimuovendo la necessità di gestire credenziali AWS, implementare logiche di retry per operazioni di rete, o gestire la sincronizzazione tra storage locale e remoto.
+
+Le espansioni presentate in questo capitolo trasformano VolWeb da una piattaforma di visualizzazione a uno strumento completo per l'analisi forense avanzata. L'integrazione di YARA colma il gap più critico identificato durante Locked Shields 2025, mentre le semplificazioni architetturali garantiscono che la piattaforma rimanga accessibile e resiliente anche nei contesti operativi più impegnativi. 
+
+Tuttavia, l'implementazione di nuove funzionalità richiede una validazione rigorosa per garantirne l'efficacia in contesti operativi reali. Il prossimo capitolo presenta i risultati della sperimentazione sul campo, analizzando le performance della piattaforma estesa e la sua applicabilità in scenari di incident response concreti.
