@@ -33,6 +33,12 @@
 \let\savedlisting\listing
 \AtBeginDocument{\let\listing\savedlisting}
 
+\usepackage{tocloft}
+\newcommand{\unnumberedchapter}[1]{%
+    \chapter*{#1}%
+    \addcontentsline{toc}{chapter}{#1}%
+    \markboth{#1}{#1}%
+}
 
 \def\dept{DIPARTIMENTO DI INFORMATICA}
 \def\course{CORSO DI LAUREA IN INFORMATICA}
