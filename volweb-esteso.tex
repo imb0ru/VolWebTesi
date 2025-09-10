@@ -101,9 +101,7 @@ Le regole caricate devono essere persistite nel database Postgresql. Questa scel
 
 Un aspetto fondamentale per l'usabilità del sistema è la capacità di organizzare le regole YARA in rulesets logici. Gli analisti forensi spesso lavorano con centinaia di regole diverse, e la capacità di raggrupparle per categoria, famiglia di malware, o tipo di analisi diventa essenziale per un workflow efficiente.
 
-Il sistema deve permettere la creazione di rulesets personalizzati dove gli utenti possono raggruppare regole correlate. Ogni ruleset deve avere un nome descrittivo e una descrizione opzionale.
-
-L'interfaccia deve fornire funzionalità di gestione dei rulesets inclusa la creazione di nuovi rulesets, l'aggiunta o rimozione di regole da un ruleset, la visualizzazione delle regole contenute in un ruleset, e l'eliminazione di rulesets non più necessari. Durante la selezione delle regole per una scansione, gli utenti devono poter selezionare interi rulesets oltre a regole individuali, semplificando significativamente il processo per analisi che richiedono l'applicazione di molte regole.
+Il sistema deve permettere la creazione di rulesets personalizzati dove gli utenti possono raggruppare regole correlate. Ogni ruleset deve avere un nome descrittivo e una descrizione opzionale. L'interfaccia deve fornire funzionalità complete di gestione che permettano la creazione di nuovi rulesets, l'aggiunta o rimozione di regole da un ruleset, la visualizzazione delle regole contenute, e l'eliminazione di rulesets non più necessari. Durante la selezione delle regole per una scansione, gli utenti devono poter selezionare interi rulesets oltre a regole individuali, semplificando significativamente il processo per analisi che richiedono l'applicazione di molte regole.
 
 \subsubsection{Esecuzione delle scansioni}
 
@@ -127,642 +125,88 @@ L'integrazione YARA è stata realizzata attraverso due nuovi moduli Django: \tex
 
 \subsubsection{Modello e Gestione delle Regole}
 
-Il modello \texttt{YaraRule} implementa una struttura dati completa per la gestione delle regole YARA:
+Il modello \texttt{YaraRule} implementa una struttura dati completa e sofisticata per la gestione delle regole YARA. L'architettura del modello è stata progettata per supportare non solo lo storage delle regole, ma anche il loro ciclo di vita completo dall'upload alla validazione, dall'organizzazione all'esecuzione.
 
-\begin{minted}[
-    breaklines,
-    frame=lines,
-    framesep=2mm,
-    baselinestretch=1.2,
-    fontsize=\small,
-    linenos
-]{python}
-class YaraRule(models.Model):
-    """
-    YaraRule Model
-    Holds the important metadata about the YARA rule.
-    """
+Il cuore del modello è costituito da un campo di testo che memorizza il contenuto completo della regola YARA nel suo formato originale. Questo approccio preserva la fedeltà della regola permettendo modifiche dirette e facilitando il debugging. Ogni regola è identificata univocamente attraverso un hash calcolato sul contenuto, implementato come campo \texttt{etag}, che previene duplicazioni accidentali e facilita la sincronizzazione tra diverse istanze di VolWeb.
 
-    id = models.AutoField(primary_key=True)
-    name = models.CharField(max_length=250)
-    etag = models.CharField(max_length=256, unique=True)
-    rule_content = models.TextField()
-    description = models.TextField(null=True, blank=True)
-    linked_yararuleset = models.ForeignKey(YaraRuleSet, on_delete=models.CASCADE, null=True)
-    status = models.IntegerField(default=0)
-    url = models.TextField(null=True)
-    source = models.CharField(max_length=10, choices=RULE_SOURCES, null=True)
-    is_active = models.BooleanField(default=True)
-\end{minted}
+Il sistema di gestione dello stato delle regole implementa una macchina a stati finiti che traccia il percorso di validazione. Lo stato iniziale "pending" (valore 0) indica che la regola è stata caricata ma non ancora validata. Gli stati di errore sono differenziati per tipo: empty content error (-1) per regole vuote, syntax error (-2) per errori di sintassi YARA, general error (-3) per problemi di compilazione, e unknown error (-4) per situazioni non previste. Lo stato "valid" (100) indica che la regola è stata validata con successo e può essere utilizzata per le scansioni.
 
-Il campo \texttt{status} implementa un sistema di stati per tracciare la validazione delle regole (0: pending, -1: empty content error, -2: syntax error, -3: general error code, -4: unknown error, 100: valid), mentre \texttt{source} distingue tra regole create manualmente o importate da repository GitHub. L'utilizzo di un \texttt{etag} univoco, calcolato come hash del contenuto, previene duplicazioni accidentali e facilita la sincronizzazione.
+L'associazione con i ruleset è gestita attraverso una foreign key che permette relazioni many-to-one, dove più regole possono appartenere allo stesso ruleset. Questa relazione implementa cascade delete per mantenere l'integrità referenziale: quando un ruleset viene eliminato, tutte le regole associate vengono automaticamente rimosse. Il campo \texttt{is\_active} permette di disabilitare temporaneamente regole senza eliminarle, utile per testing o per gestire regole che generano falsi positivi in specifici contesti.
 
-\subsubsection{Serializer e Validazione delle Regole}
+I metadati aggiuntivi includono il campo \texttt{source} che distingue tra regole create manualmente nell'editor integrato, importate da file locali, o scaricate da repository GitHub. Il campo \texttt{url} mantiene il riferimento alla sorgente originale per regole importate, facilitando aggiornamenti e attribuzione. La \texttt{description} opzionale permette di documentare lo scopo e il contesto della regola, informazione preziosa durante investigazioni complesse dove centinaia di regole potrebbero essere attive.
 
-Il \texttt{YaraRuleSerializer} è un serializer che si occupa non solo della serializzazione dei modelli \texttt{YaraRule}, ma anche della gestione sicura delle relazioni e dell'attivazione automatica dei task asincroni di validazione.
+\subsubsection{Sistema di Validazione e Serializzazione}
 
-Il campo \texttt{ruleset\_name}, calcolato tramite il serializer, espone in sola lettura il nome del \texttt{YaraRuleSet} collegato. Il metodo \texttt{to\_representation} è stato sovrascritto per includere in modo robusto i dettagli del \texttt{linked\_yararuleset}, evitando errori in caso di cancellazioni a cascata.
+Il sistema di validazione rappresenta uno degli aspetti più critici dell'implementazione, garantendo che solo regole sintatticamente e semanticamente corrette vengano utilizzate durante le scansioni. L'architettura asincrona adottata permette di validare grandi quantità di regole senza impattare l'esperienza utente.
 
-In fase di creazione (\texttt{create}), il serializer salva la regola e avvia immediatamente la validazione asincrona della stessa tramite il task \texttt{start\_yararule\_validation}. Se la regola è associata a un RuleSet, viene aggiornato anche lo stato di quest’ultimo e viene triggerata la validazione del set con \texttt{start\_ruleset\_validation}.
+Il serializer Django REST Framework per \texttt{YaraRule} estende la classe base \texttt{ModelSerializer} con logica custom per gestire il workflow di validazione. Quando una nuova regola viene creata attraverso il metodo \texttt{create}, il serializer non solo salva i dati nel database ma attiva immediatamente un task Celery per la validazione asincrona. Questo approccio disaccoppia l'operazione di upload, che deve essere rapida per mantenere l'UI responsive, dal processo di validazione che può richiedere tempo significativo per regole complesse.
 
-Durante l’aggiornamento (\texttt{update}), il serializer rileva se sono cambiate parti sensibili come il contenuto della regola o l’associazione al RuleSet. In tal caso, oltre a far ripartire la validazione della regola stessa, provvede a riavviare anche la validazione del RuleSet precedente (se la regola è stata spostata) e di quello corrente, garantendo così la coerenza dello stato di validazione complessivo.:
+La validazione stessa avviene in un worker Celery separato che può essere scalato orizzontalmente per gestire carichi elevati. Il processo di validazione inizia creando un ambiente isolato dove la regola viene testata. Il primo step verifica che il contenuto non sia vuoto e contenga almeno una struttura di regola YARA valida. Successivamente, il parser YARA nativo viene invocato per verificare la sintassi. Questo include controllo della struttura delle sezioni (meta, strings, condition), validazione dei pattern nelle strings (stringhe, hex, regex), e verifica della logica booleana nella condition.
 
-\begin{minted}[
-    breaklines,
-    frame=lines,
-    framesep=2mm,
-    baselinestretch=1.2,
-    fontsize=\small,
-    linenos
-]{python}
-class YaraRuleSerializer(serializers.ModelSerializer):
-    ruleset_name = serializers.CharField(source='linked_yararuleset.name', read_only=True, allow_null=True)
-    
-    class Meta:
-        model = YaraRule
-        fields = "__all__"
-    
-    def to_representation(self, instance):
-        """
-        Override to add linked_yararuleset information safely
-        """
-        data = super().to_representation(instance)
-        
-        # Handle the case where linked_yararuleset might not exist anymore (e.g., during cascade delete)
-        try:
-            if hasattr(instance, 'linked_yararuleset') and instance.linked_yararuleset:
-                data['linked_yararuleset'] = {
-                    'id': instance.linked_yararuleset.id,
-                    'name': instance.linked_yararuleset.name
-                }
-            else:
-                data['linked_yararuleset'] = None
-        except YaraRuleSet.DoesNotExist:
-            # This can happen during cascade deletes when the ruleset is deleted first
-            data['linked_yararuleset'] = None
-        
-        return data
-    
-    def create(self, validated_data):
-        """
-        Create a new YARA rule.
-        """
-        # Create the rule instance
-        rule = super().create(validated_data)
-        
-        # Trigger validation
-        try:
-            from volatility_engine.tasks import start_yararule_validation
-            start_yararule_validation.delay(rule.id)
-        except ImportError:
-            logger.warning("Could not import start_yararule_validation task")
-        except Exception as e:
-            logger.error(f"Error triggering rule validation: {e}")
-        
-        # Trigger ruleset validation if linked
-        if rule.linked_yararuleset:
-            try:
-                rule.linked_yararuleset.status = 0
-                rule.linked_yararuleset.save()
-                
-                from volatility_engine.tasks import start_ruleset_validation
-                start_ruleset_validation.delay(rule.linked_yararuleset.id)
-            except ImportError:
-                logger.warning("Could not import start_ruleset_validation task")
-            except Exception as e:
-                logger.error(f"Error triggering ruleset validation: {e}")
-        
-        return rule
-    
-    def update(self, instance, validated_data):
-        """
-        Update a YARA rule.
-        """
-        # Store old content for comparison
-        old_content = instance.rule_content
-        old_ruleset = instance.linked_yararuleset
-        
-        # Update the instance
-        rule = super().update(instance, validated_data)
-        
-        # Check if content changed
-        content_changed = 'rule_content' in validated_data and old_content != rule.rule_content
-        
-        # Check if ruleset changed
-        ruleset_changed = 'linked_yararuleset' in validated_data and old_ruleset != rule.linked_yararuleset
-        
-        # Trigger revalidation if content changed
-        if content_changed:
-            rule.status = 0
-            rule.save(update_fields=['status'])
-            
-            try:
-                from volatility_engine.tasks import start_yararule_validation
-                start_yararule_validation.delay(rule.id)
-            except ImportError:
-                logger.warning("Could not import start_yararule_validation task")
-            except Exception as e:
-                logger.error(f"Error triggering rule validation: {e}")
-        
-        # Trigger ruleset revalidation if needed
-        if content_changed or ruleset_changed:
-            # Revalidate old ruleset if rule was removed from it
-            if ruleset_changed and old_ruleset:
-                try:
-                    old_ruleset.status = 0
-                    old_ruleset.save()
-                    
-                    from volatility_engine.tasks import start_ruleset_validation
-                    start_ruleset_validation.delay(old_ruleset.id)
-                except ImportError:
-                    logger.warning("Could not import start_ruleset_validation task")
-                except Exception as e:
-                    logger.error(f"Error triggering old ruleset validation: {e}")
-            
-            # Revalidate new/current ruleset
-            if rule.linked_yararuleset:
-                try:
-                    rule.linked_yararuleset.status = 0
-                    rule.linked_yararuleset.save()
-                    
-                    from volatility_engine.tasks import start_ruleset_validation
-                    start_ruleset_validation.delay(rule.linked_yararuleset.id)
-                except ImportError:
-                    logger.warning("Could not import start_ruleset_validation task")
-                except Exception as e:
-                    logger.error(f"Error triggering ruleset validation: {e}")
-        
-        return rule
-\end{minted}
+Se la regola passa la validazione sintattica, viene tentata la compilazione. Questo step aggiuntivo cattura errori che il parser potrebbe non identificare, come riferimenti a variabili non definite o uso di funzioni deprecate. La compilazione genera anche ottimizzazioni che velocizzano l'esecuzione durante le scansioni effettive.
 
-\subsubsection{Modello e gestione dei RuleSets}
-Il modello \texttt{YaraRuleSet} rappresenta un insieme logico di regole YARA, permettendo di raggrupparle in collezioni coerenti. Oltre ai campi base come \texttt{name} e \texttt{description}, include un campo \texttt{compiled\_rules} per memorizzare direttamente la versione compilata delle regole, utile per ottimizzare l'esecuzione dei controlli. Il campo \texttt{is\_default} indica se il set rappresenta il RuleSet predefinito, mentre \texttt{status} può essere utilizzato per gestire lo stato del RuleSet (ad esempio attivo, disabilitato o in validazione).
+Un aspetto particolarmente sofisticato del sistema di validazione riguarda la gestione delle dipendenze tra regole e rulesets. Quando una regola viene modificata, non solo viene rivalidata la regola stessa, ma anche il ruleset a cui appartiene. Questo garantisce che modifiche a una regola non compromettano l'integrità dell'intero ruleset. Il serializer implementa questa logica nel metodo \texttt{update}, dove vengono tracciati i cambiamenti al contenuto della regola e all'associazione con rulesets.
 
-Il modello \texttt{UploadSession} consente invece di tracciare le sessioni di caricamento di file, associandole facoltativamente a un \texttt{YaraRuleSet} specifico tramite una chiave esterna. Questo permette di sapere con quale RuleSet un determinato file è stato analizzato o per quale insieme di regole è stato caricato. Include inoltre metadati come il nome del file, una descrizione libera e la sorgente del file.
+Se una regola viene spostata da un ruleset a un altro, entrambi i rulesets vengono marcati per rivalidazione. Il ruleset originale potrebbe dover essere ricompilato senza la regola rimossa, mentre il nuovo ruleset deve essere validato con l'aggiunta. Questa orchestrazione complessa è gestita attraverso una serie di task Celery concatenati che garantiscono consistenza eventuale del sistema.
 
-\begin{minted}[
-    breaklines,
-    frame=lines,
-    framesep=2mm,
-    baselinestretch=1.2,
-    fontsize=\small,
-    linenos
-]{python}
-class YaraRuleSet(models.Model):
-    """Model for YARA rule sets/collections"""
-    id = models.AutoField(primary_key=True)
-    name = models.CharField(max_length=200, unique=True)
-    description = models.TextField(blank=True, null=True)
-    is_default = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    compiled_rules = models.BinaryField(null=True, blank=True)
-    status = models.IntegerField(default=0)
-        
-class UploadSession(models.Model):
-    upload_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    filename = models.CharField(max_length=255)
-    description = models.TextField(blank=True, null=True)
-    yararuleset = models.ForeignKey(YaraRuleSet, on_delete=models.CASCADE, null=True, blank=True)
-    source = models.CharField(max_length=255, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-\end{minted}
+La comunicazione dei risultati di validazione avviene attraverso WebSocket utilizzando Django Channels. Quando la validazione è completa, sia con successo che con errore, un messaggio viene inviato al canale WebSocket associato all'utente. Il frontend React sottoscrive questo canale e aggiorna l'UI in tempo reale, mostrando lo stato di validazione attraverso indicatori visivi (icone, colori) e messaggi dettagliati in caso di errore.
 
-\subsubsection{Serializzazione dei RuleSet e Gestione Upload Multipart}
-Il modulo dei serializer definisce sia la serializzazione del modello \texttt{YaraRuleSet}, sia una serie di serializer utili alla gestione di upload multipart per file di grandi dimensioni.
+\subsubsection{Gestione dei RuleSets}
 
-Il \texttt{YaraRuleSetSerializer} consente la serializzazione completa dei RuleSet YARA, rispettando i campi di sola lettura per le date di creazione e aggiornamento.
+I RuleSets rappresentano un'astrazione fondamentale per organizzare e gestire collezioni di regole YARA. L'implementazione va oltre il semplice raggruppamento, fornendo ottimizzazioni significative per le performance e funzionalità avanzate per la gestione operativa.
 
-I serializer \texttt{InitiateUploadSerializer}, \texttt{UploadChunkSerializer} e \texttt{CompleteUploadSerializer} gestiscono rispettivamente l'inizializzazione dell'upload, il caricamento dei singoli chunk e la finalizzazione della sessione, fornendo così un flusso robusto per il caricamento di file divisi in parti.
+Il modello \texttt{YaraRuleSet} mantiene non solo i metadati del ruleset ma anche una versione binaria precompilata di tutte le regole contenute. Questa strategia di caching elimina la necessità di ricompilare le regole ad ogni scansione, riducendo il tempo di avvio delle scansioni da minuti a secondi per rulesets di grandi dimensioni. Il campo \texttt{compiled\_rules} memorizza il bytecode generato dal compilatore YARA, che può essere caricato direttamente in memoria quando necessario.
 
-\begin{minted}[
-breaklines,
-frame=lines,
-framesep=2mm,
-baselinestretch=1.2,
-fontsize=\small,
-linenos
-]{python}
-from rest_framework import serializers
-from .models import YaraRuleSet
+La compilazione dei rulesets avviene attraverso un processo orchestrato che raccoglie tutte le regole attive associate, le concatena in un unico file virtuale, e invoca il compilatore YARA. Il processo gestisce intelligentemente conflitti di naming, dove più regole potrebbero avere lo stesso nome, attraverso un sistema di namespacing che prefissa ogni regola con un identificatore univoco del ruleset. Questo permette di combinare regole da fonti diverse senza preoccuparsi di collisioni.
 
-class YaraRuleSetSerializer(serializers.ModelSerializer):
-    class Meta:
-    model = YaraRuleSet
-    fields = 'all'
-    read_only_fields = ('created_at', 'updated_at')
+Il campo \texttt{is\_default} identifica rulesets che dovrebbero essere applicati automaticamente a ogni nuova analisi. Questa funzionalità, richiesta specificamente dopo l'esperienza di Locked Shields, permette di definire un baseline di regole sempre attive per catturare minacce comuni. Durante l'esercitazione, la necessità di applicare manualmente le stesse regole base a ogni dump rallentava significativamente il processo di analisi.
 
-class InitiateUploadSerializer(serializers.Serializer):
-    filename = serializers.CharField(max_length=255)
-    description = serializers.CharField(max_length=255,required=False, allow_blank=True, default="")
-    yara_ruleset_id = serializers.IntegerField(required=False, allow_null=True, default=None)
-    source = serializers.CharField(max_length=255)
+\subsubsection{Metodo di Scansione e Orchestrazione}
 
-class UploadChunkSerializer(serializers.Serializer):
-    upload_id = serializers.UUIDField()
-    part_number = serializers.IntegerField()
-    chunk = serializers.FileField()
+Il sistema di scansione YARA rappresenta il punto di convergenza tra la gestione delle regole e l'analisi forense vera e propria. L'implementazione deve bilanciare performance, flessibilità e affidabilità, gestendo dump di memoria che possono superare i 64 GB mantenendo tempi di risposta accettabili.
 
-class CompleteUploadSerializer(serializers.Serializer):
-    upload_id = serializers.UUIDField()
-\end{minted}
+Il metodo principale \texttt{run\_yara\_scan} nel VolatilityEngine orchestra l'intero processo di scansione. L'implementazione supporta tre modalità operative principali, ciascuna ottimizzata per scenari d'uso specifici. La prima modalità utilizza rulesets pre-compilati, ideale per analisi di routine dove le stesse regole vengono applicate ripetutamente. In questo caso, il bytecode compilato viene caricato direttamente dalla cache, eliminando completamente il tempo di compilazione.
 
-\subsubsection{Sistema di Validazione Asincrona}
-La validazione asincrona dei \texttt{YaraRuleSet} viene gestita tramite task Celery che si occupano di recuperare tutte le regole YARA attive e già validate o associate a un determinato ruleset, concatenarle e tentare la compilazione tramite libreria \texttt{yara}.
-Il sistema aggiorna lo stato del ruleset nel database e utilizza i WebSocket per notificare in tempo reale i client sull'esito della validazione, inviando messaggi di successo o di errore attraverso un canale dedicato.
-In caso di compilazione fallita o assenza di regole valide, il ruleset viene marcato come non valido e la compilazione binaria viene rimossa, garantendo così integrità e tracciabilità del processo.
+La seconda modalità permette la selezione granulare di regole individuali, utile per investigazioni mirate o quando si sospetta la presenza di specifici malware. Le regole selezionate vengono compilate on-demand in un ruleset temporaneo ottimizzato per la specifica scansione. La terza modalità applica tutte le regole attive nel sistema, appropriata per analisi iniziali dove non si hanno indicazioni specifiche sulla natura della minaccia.
 
-\begin{minted}[
-    breaklines,
-    frame=lines,
-    framesep=2mm,
-    baselinestretch=1.2,
-    fontsize=\small,
-    linenos
-]{python}
-@shared_task
-def start_yararule_validation(yara_rule_id):
-    """
-    This task will validate the YARA rule and optionally trigger ruleset validation.
-    
-    Modified to respect batch upload context:
-    - Individual rule validation always happens
-    - Ruleset validation only happens if NOT in batch upload mode
-    """
-    YaraRule = apps.get_model('yararules', 'YaraRule')
-    instance = YaraRule.objects.get(id=yara_rule_id)
-    
-    logger.info(f"Starting validation for YARA rule: {instance.name} (ID: {yara_rule_id})")
-    
-    channel_layer = get_channel_layer()
-    
-    # Import here to avoid circular imports
-    from volatility_engine.engine import VolatilityEngine
-    engine = VolatilityEngine(instance)
-    
-    # Set status to in-progress
-    instance.status = 0
-    instance.save()
-    
-    # Perform the actual validation
-    engine.start_yararule_validation()
-    instance.refresh_from_db()
+L'orchestrazione della scansione gestisce molteplici aspetti complessi. La preparazione delle regole include la validazione che tutte le regole selezionate siano in stato "valid", la risoluzione delle dipendenze tra regole che potrebbero riferirsi l'una all'altra, e l'ottimizzazione dell'ordine di applicazione per massimizzare la cache hit rate. Le regole vengono ordinate per complessità, con pattern semplici eseguiti prima di regex complesse, riducendo il tempo totale di scansione.
 
-    # Send individual rule validation notification
-    from yararules.serializers import YaraRuleSerializer
-    serializer = YaraRuleSerializer(instance)
-    
-    async_to_sync(channel_layer.group_send)(
-        "yararules",
-        {
-            "type": "send_notification",
-            "status": "created",  
-            "message": serializer.data 
-        }
-    )
-    logger.info(f"Completed validation for YARA rule: {instance.name}")
+La gestione della memoria durante la scansione è critica per dump di grandi dimensioni. Il sistema implementa una strategia di scanning incrementale dove il dump viene processato in chunk configurabili (default 100MB). Questo approccio previene out-of-memory errors su sistemi con RAM limitata e permette di mostrare risultati parziali mentre la scansione procede. Ogni chunk viene scansionato indipendentemente, con i risultati aggregati in tempo reale.
 
+La gestione degli errori durante la scansione distingue tra errori fatali che richiedono l'interruzione immediata e warning che possono essere ignorati. Errori fatali includono corruzione del dump o out-of-memory conditions. Warning includono timeout su regole specifiche o pattern che non possono essere applicati a certe regioni di memoria. Tutti gli errori vengono loggati con contesto dettagliato per facilitare il debugging post-mortem.
 
-@shared_task
-def start_ruleset_validation(yara_ruleset_id):
-    """
-    This task will validate the YARA rule and recompile the ruleset.
-    
-    No changes needed here - this task can run independently
-    """
-    YaraRuleSet = apps.get_model('yararulesets', 'YaraRuleSet')
-    instance = YaraRuleSet.objects.get(id=yara_ruleset_id)
-    
-    logger.info(f"Starting validation for YARA ruleset: {instance.name} (ID: {yara_ruleset_id})")
-    
-    channel_layer = get_channel_layer()
-    
-    # Import here to avoid circular imports
-    from volatility_engine.engine import VolatilityEngine
-    engine = VolatilityEngine(instance)
-    
-    # Set status to in-progress
-    instance.status = 0
-    instance.save()
-    
-    # Perform the actual validation
-    validation_result = engine.start_ruleset_validation()
-    
-    # Save the result
-    instance.status = validation_result
-    instance.save()
-        
-    from yararulesets.serializers import YaraRuleSetSerializer
-    serializer = YaraRuleSetSerializer(instance)
-    
-    async_to_sync(channel_layer.group_send)(
-        "yararulesets",
-        {
-            "type": "send_notification",
-            "status": "updated",
-            "message": serializer.data
-        }
-    )
-    logger.info(f"Completed validation for YARA ruleset: {instance.name} with status {instance.status}")
-\end{minted}
+L'integrazione con Volatility avviene attraverso il plugin yarascan nativo, che viene invocato con parametri ottimizzati basati sul contesto. Il sistema passa automaticamente il profilo corretto del sistema operativo, configura i limiti di memoria appropriati e specifica le regioni di memoria da scansionare.
 
-\subsubsection{Metodo di Scansione YARA e Task Asincrono}
-
-Il sistema di scansione YARA in VolWeb è implementato attraverso due componenti strettamente integrati: il metodo \texttt{run\_yara\_scan} nel VolatilityEngine che gestisce l'esecuzione effettiva della scansione, e il task Celery \texttt{start\_yarascan} che orchestra l'operazione in modo asincrono. Questa architettura garantisce che le scansioni potenzialmente lunghe non blocchino l'interfaccia utente, mantenendo al contempo flessibilità operativa attraverso il supporto di tre modalità di scansione: utilizzo di rulesets multipli pre-compilati per analisi tematiche, selezione granulare di regole individuali per ricerche mirate, o applicazione dell'intero corpus di regole attive.
-
-Il metodo \texttt{run\_yara\_scan} implementa la logica core della scansione, gestendo la preparazione delle regole, l'esecuzione attraverso il plugin yarascan di Volatility, e la restituzione dei risultati. L'implementazione ottimizza le performance attraverso il riutilizzo di regole pre-compilate quando disponibili e gestisce efficientemente la memoria durante la combinazione di grandi quantità di regole:
-
-\begin{minted}[
-    breaklines,
-    frame=lines,
-    framesep=2mm,
-    baselinestretch=1.2,
-    fontsize=\small,
-    linenos
-]{python}
-def run_yara_scan(self, yara_rulesets=None, yara_rules=None):
-    """
-    Run YARA scan on evidence with selected rulesets and/or rules.
-    Args:
-        yara_rulesets: List of YaraRuleSet objects
-        yara_rules: List of rule IDs
-    
-    Returns:
-        List of scan results or None if no rules
-    """
-    from yararules.models import YaraRule
-    import traceback
-    import os
-    import time
-    from datetime import datetime
-    
-    try:
-        logger.info(f"Starting YARA scan on evidence '{self.obj.name}'")
-        
-        # Preparation phase
-        combined_rules = ""
-        scan_description_parts = []
-        active_rules = YaraRule.objects.none()
-        
-        if yara_rulesets:
-            # Handle multiple rulesets
-            logger.info(f"Processing {len(yara_rulesets)} rulesets")
-            ruleset_names = []
-            
-            for ruleset in yara_rulesets:
-                if not ruleset.compiled_rules:
-                    logger.warning(
-                        f"Ruleset '{ruleset.name}' has no compiled rules"
-                    )
-                    continue
-                
-                ruleset_names.append(ruleset.name)
-                
-                # Get rules from this ruleset
-                ruleset_rules = YaraRule.objects.filter(
-                    linked_yararuleset=ruleset,
-                    is_active=True,
-                    status=100
-                )
-                
-                # Union with other active rules
-                active_rules = active_rules.union(ruleset_rules)
-                
-                # Add rule contents
-                for rule in ruleset_rules:
-                    logger.debug(f"Adding rule '{rule.name}' from "
-                               f"ruleset '{ruleset.name}'")
-                    combined_rules += rule.rule_content + "\n\n"
-            
-            if ruleset_names:
-                scan_description_parts.append(
-                    f"Rulesets: {', '.join(ruleset_names)}"
-                )
-                
-        elif yara_rules:
-            # Handle individual rules
-            logger.info(f"Processing {len(yara_rules)} individual rules")
-            
-            for rule_id in yara_rules:
-                try:
-                    rule = YaraRule.objects.get(
-                        id=rule_id,
-                        is_active=True,
-                        status=100
-                    )
-                    logger.info(f"Adding rule '{rule.name}' to scan")
-                    combined_rules += rule.rule_content + "\n\n"
-                    
-                except YaraRule.DoesNotExist:
-                    logger.warning(f"Rule {rule_id} not found or invalid")
-            
-            rule_count = len(yara_rules)
-            scan_description_parts.append(
-                f"{rule_count} individual rule{'s' if rule_count > 1 else ''}"
-            )
-        
-        else:
-            # Use all active rules
-            active_rules = YaraRule.objects.filter(
-                is_active=True, 
-                status=100
-            )
-            
-            if not active_rules.exists():
-                logger.warning("No active YARA rules found")
-                return None
-            
-            for rule in active_rules:
-                combined_rules += rule.rule_content + "\n\n"
-            
-            scan_description_parts.append("All Active Rules")
-        
-        # Verify we have rules to scan with
-        if not combined_rules.strip():
-            logger.warning("No valid rules found for scanning")
-            return None
-        
-        logger.info(f"Combined {len(combined_rules.splitlines())} "
-                   f"lines of YARA rules")
-        
-        # Create temporary file with combined rules
-        with tempfile.NamedTemporaryFile(
-            mode='w', 
-            suffix='.yar', 
-            delete=False
-        ) as temp_file:
-            temp_file.write(combined_rules)
-            yara_file_path = temp_file.name
-        
-        try:
-            # Execute yarascan plugin
-            logger.info("Executing yarascan plugin")
-            start_time = time.time()
-            
-            result = self.run_plugin(
-                'yarascan',
-                pid_list=[],
-                yara_file=yara_file_path
-            )
-            
-            execution_time = time.time() - start_time
-            logger.info(f"Yarascan completed in {execution_time:.2f}s")
-            
-            # Log execution details for debugging
-            if result:
-                logger.info(f"YARA scan found {len(result)} matches")
-            else:
-                logger.info("YARA scan completed with no matches")
-            
-            # Return raw results directly
-            return result
-            
-        finally:
-            # Clean up temporary file
-            if os.path.exists(yara_file_path):
-                os.unlink(yara_file_path)
-                logger.debug(f"Cleaned up temporary YARA file: {yara_file_path}")
-                
-    except Exception as e:
-        logger.error(f"YARA scan failed: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise
-\end{minted}
-
-Il task asincrono \texttt{start\_yarascan} orchestra l'esecuzione della scansione attraverso Celery, gestendo l'intero ciclo di vita dall'invocazione alla comunicazione dei risultati. L'implementazione utilizza Django Channels per notifiche real-time attraverso WebSocket, mantenendo l'utente informato durante ogni fase del processo. Il task valida i parametri di input, verifica che i rulesets siano correttamente compilati (status=100), e gestisce eventuali errori comunicandoli all'utente con contesto sufficiente per il troubleshooting:
-
-\begin{minted}[
-    breaklines,
-    frame=lines,
-    framesep=2mm,
-    baselinestretch=1.2,
-    fontsize=\small,
-    linenos
-]{python}
-@shared_task
-def start_yarascan(evidence_id, rulesets=None, rules=None):
-    """
-    Run YARA scan on evidence with selected rulesets/rules
-    """
-    import traceback
-    from datetime import datetime
-    
-    try:
-        instance = Evidence.objects.get(id=evidence_id)
-        channel_layer = get_channel_layer()
-        engine = VolatilityEngine(instance)
-        
-        logger.info(f"Starting YARA scan for evidence {evidence_id}")
-        
-        # Send start notification
-        async_to_sync(channel_layer.group_send)(
-            f"volatility_tasks_{evidence_id}",
-            {
-                "type": "send_notification",
-                "message": {
-                    "name": "yarascan",
-                    "status": "started",
-                    "result": None,
-                },
-            },
-        )
-        
-        scan_executed = False
-        scan_results = []
-        
-        # Execute scan based on parameters
-        if rulesets:
-            from yararulesets.models import YaraRuleSet
-            selected_rulesets = []
-            
-            for ruleset_id in rulesets:
-                try:
-                    ruleset = YaraRuleSet.objects.get(
-                        id=ruleset_id, 
-                        status=100
-                    )
-                    selected_rulesets.append(ruleset)
-                    logger.info(f"Added ruleset '{ruleset.name}' to scan")
-                except YaraRuleSet.DoesNotExist:
-                    logger.warning(f"Ruleset {ruleset_id} not found")
-            
-            if selected_rulesets:
-                logger.info(f"Running scan with {len(selected_rulesets)} "
-                           f"rulesets")
-                scan_result = engine.run_yara_scan(
-                    yara_rulesets=selected_rulesets
-                )
-                
-                scan_executed = True
-                
-                if scan_result:
-                    scan_results.extend(scan_result)
-                    
-        elif rules:
-            logger.info(f"Running scan with individual rules: {rules}")
-            scan_result = engine.run_yara_scan(yara_rules=rules)
-            
-            scan_executed = True
-            
-            if scan_result:
-                scan_results.extend(scan_result)
-        
-        # Send completion notification
-        if scan_executed:
-            async_to_sync(channel_layer.group_send)(
-                f"volatility_tasks_{evidence_id}",
-                {
-                    "type": "send_notification",
-                    "message": {
-                        "name": "yarascan",
-                        "status": "completed",
-                        "result": {
-                            "matches_count": len(scan_results),
-                            "scan_time": datetime.now().isoformat()
-                        },
-                    },
-                },
-            )
-            
-            logger.info(f"YARA scan completed with {len(scan_results)} matches")
-        else:
-            logger.warning("No scan was executed")
-            
-    except Exception as e:
-        logger.error(f"YARA scan failed: {str(e)}")
-        logger.error(traceback.format_exc())
-        
-        # Send error notification
-        async_to_sync(channel_layer.group_send)(
-            f"volatility_tasks_{evidence_id}",
-            {
-                "type": "send_notification",
-                "message": {
-                    "name": "yarascan",
-                    "status": "failed",
-                    "error": str(e),
-                },
-            },
-        )
-\end{minted}
-
-Questa architettura a due livelli separa elegantemente le responsabilità: il metodo \texttt{run\_yara\_scan} si concentra sulla logica di scansione pura, mentre il task \texttt{start\_yarascan} gestisce l'orchestrazione asincrona e la comunicazione. Il design segue il pattern esistente in VolWeb dove i risultati dei plugin vengono passati direttamente al frontend senza trasformazioni server-side, mantenendo la semplicità del backend e delegando al frontend la responsabilità di formattare e arricchire i dati per la visualizzazione. Questa separazione garantisce che anche scansioni di lunga durata su dump di grandi dimensioni non impattino l'esperienza utente, mantenendo l'interfaccia responsive e informativa durante l'intero processo di analisi.
+Il task Celery \texttt{start\_yarascan} gestisce l'aspetto asincrono dell'operazione. Questo task è responsabile dell'inizializzazione del contesto di scansione, del monitoraggio del progresso con aggiornamenti via WebSocket ogni 5 secondi, della gestione di cancellazioni e timeout, e dell'aggregazione e storage dei risultati.
 
 \subsection{Interfaccia Frontend per la Gestione YARA}
 
-L'interfaccia utente per la gestione YARA è stata implementata in React con Material-UI, fornendo un'esperienza utente moderna e responsive. La struttura modulare del frontend rispecchia l'architettura backend.
+L'interfaccia utente per la gestione YARA è stata progettata seguendo principi di usabilità derivati dall'osservazione diretta degli analisti durante Locked Shields.
 
-\subsubsection{Lista delle Regole YARA}
+\subsubsection{Dashboard delle Regole}
 
-Il componente principale per la visualizzazione delle regole implementa una griglia interattiva (tramite \texttt{DataGrid} di MUI) che consente di visualizzare, filtrare e gestire in modo avanzato le regole YARA memorizzate nel sistema. Ogni riga mostra il nome, la descrizione, il contenuto, il ruleset di appartenenza e lo stato di compilazione. Sono inoltre presenti pulsanti per modificare, eliminare, ricompilare o visualizzare in dettaglio ciascuna regola. Il caricamento dei dati avviene attraverso chiamate HTTP asincrone verso l’API backend.
+La dashboard principale presenta una vista unificata di tutte le regole nel sistema attraverso una griglia interattiva ottimizzata. L'implementazione utilizza Material-UI DataGrid con virtualizzazione delle righe, permettendo di gestire efficientemente migliaia di regole senza degradazione delle performance. Solo le righe visibili vengono renderizzate nel DOM, con caricamento lazy dei dettagli quando necessario.
+
+La griglia implementa funzionalità che includono sorting multi-colonna con indicatori visivi di ordinamento primario e secondario, filtering avanzato con supporto per operatori logici e espressioni regolari, ricerca full-text che opera su tutti i campi simultaneamente, e paginazione server-side con caching intelligente delle pagine visitate. Le colonne possono essere riorganizzate via drag-and-drop, ridimensionate, e bloccate per rimanere visibili durante lo scrolling orizzontale.
+
+Ogni riga mostra informazioni essenziali ottimizzate per scansione visiva rapida: il nome della regola, la sua descrizione, il suo contenuto, il ruleset di appartenenza, la fonte, l'identificatore univoco (etag), lo stato di validazione e le azioni rapide disponibili.
+
+Le azioni rapide disponibili per ogni regola sono: la visualizzazione e l'editing della regola, che aprono un dialog modale con editor integrato che supporta syntax highlighting e controllo sintattico in tempo reale e che esegue il salvataggio della regola con validazione immediata; la validazione manuale, che permette di rivalidare una regola in qualsiasi momento; l'eliminazione, che richiede conferma tramite dialog per prevenire cancellazioni accidentali.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=1\linewidth]{images/volweb-esteso/volweb-rulelist.png}
 \end{figure}
 
-\subsubsection{Dialog di Import/Upload delle Regole}
-Il dialog dedicato all'importazione delle regole implementa un selettore contestuale che consente all'utente di scegliere la modalità di import preferita. In particolare, è possibile caricare regole direttamente dal file system locale (upload di file) oppure effettuare l'import di intere repository ospitate su GitHub. Questa flessibilità permette di supportare sia scenari in cui le regole sono già presenti in locale, sia workflow più avanzati in cui le regole vengono versionate e mantenute tramite repository remoti, facilitando l'integrazione con pratiche di gestione collaborativa del codice.
+\subsubsection{Import e Creazione di Regole}
+
+Il sistema di acquisizione delle regole supporta tre modalità principali: upload da file system, import da repository GitHub, e creazione manuale tramite editor integrato.
+
+L'upload da file system implementa un'interfaccia che accetta la selezione di singoli file .yar. Il dialog consente la selezione della modalità di import (regola standalone, ruleset esistente, nuovo ruleset). Durante l'upload, una progress bar mostra l'avanzamento per file, con possibilità di cancellare upload in corso.
+
+L'integrazione GitHub permette import diretto da repository pubbliche, eliminando il download manuale. Il sistema mantiene una lista curata di repository popolari (Yara-Rules, reversinglabs-yara, Neo23x0/signature-base) con accesso one-click. Per repository custom, l'utente può inserire l'URL e il sistema enumera automaticamente tutti i file .yar disponibili. Il sistema mantiene il riferimento alla fonte originale per facilitare aggiornamenti futuri.
+
+L'editor integrato per creazione di regole custom fornisce un ambiente di sviluppo completo. Il componente, basato su Monaco Editor (lo stesso engine di VS Code), offre syntax highlighting specifico per YARA con colorazione differenziata per keywords, strings, e commenti. L'auto-completion suggerisce keywords YARA, nomi di variabili definite, e funzioni built-in mentre si digita. La validazione real-time sottolinea errori sintattici con squiggly lines rosse e mostra tooltip con descrizioni degli errori on hover.
 
 \begin{figure}[H]
 \centering
@@ -777,43 +221,47 @@ Il dialog dedicato all'importazione delle regole implementa un selettore contest
 \end{minipage}
 \end{figure}
 
-\subsubsection{Dialog per la Creazione e Modifica delle Regole}
-Il dialog dedicato alla creazione e modifica delle regole integra un editor avanzato che supporta la validazione del contenuto. Questa soluzione consente agli utenti di scrivere o aggiornare le regole in modo più agevole e sicuro, evidenziando immediatamente eventuali errori sintattici o anomalie. L'adozione di un editor evoluto migliora significativamente l'esperienza d'uso, riducendo il rischio di introdurre regole non valide e favorendo un processo di definizione più rapido e affidabile.
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=1\linewidth]{images/volweb-esteso/volweb-creation-dialog.png}
-\end{figure}
+La gestione degli errori durante l'import è stata progettata per essere informativa senza essere overwhelming. Errori di validazione sono raggruppati per tipo e presentati in un formato scannable. Per ogni errore, il sistema mostra la linea esatta dove si verifica il problema, una descrizione human-readable dell'errore, e suggerimenti per la correzione quando possibili. Gli errori non bloccano l'import di altre regole valide, permettendo import parziali con report dettagliato di cosa è stato importato e cosa è fallito.
 
 \subsubsection{Gestione dei RuleSets}
 
-L'interfaccia per la gestione dei ruleset rappresenta un componente avanzato dell'applicazione, dedicato alla visualizzazione aggregata e alla manutenzione dei gruppi di regole YARA. Il componente \texttt{YaraRuleSetsList} mostra i ruleset in una tabella interattiva con righe espandibili, statistiche sullo stato di compilazione e pulsanti di azione rapida per validazione, clonazione, modifica e cancellazione. 
+L'implementazione della dashboard dedicata ai ruleset é la stessa della dashboard delle regole, utilizzando Material-UI DataGrid con virtualizzazione delle righe per gestire efficientemente centinaia di ruleset senza degradazione delle performance.
 
-Il caricamento e l’aggiornamento dei dati avvengono tramite chiamate asincrone e notifiche via WebSocket per riflettere in tempo reale l’avanzamento delle validazioni.
+Ogni riga mostra informazioni essenziali ottimizzate per scansione visiva rapida: il nome del ruleset, la sua descrizione, lo stato di compilazione e le azioni rapide disponibili.
+
+Le azioni rapide disponibili per ogni ruleset sono: la visualizzazione dettagliata che reinvia alla vista espansa del ruleset con lista delle regole contenute e stato di ciascuna; la compilazione manuale che permette di ricompilare il ruleset in qualsiasi momento; l'eliminazione, che richiede conferma tramite dialog per prevenire cancellazioni accidentali.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=1\linewidth]{images/volweb-esteso/volweb-rulesetlist.png}
 \end{figure}
 
+\subsubsection{Configurazione ed Esecuzione delle Scansioni}
 
-\subsubsection{Componente di Scansione}
+L'interfaccia di scansione fornisce controllo sulla selezione delle regole utilizzando un'interfaccia a due pannelli con rulesets sulla sinistra e regole individuali sulla destra. Gli utenti possono selezionare interi rulesets, che automaticamente selezionano tutte le regole attive al loro interno, oppure selezionare regole individuali, o entrambe le modalità. É possibile, infine, selezionare tutti i rulesets e/o tutte le regole attive tramite checkbox dedicate.
 
-Il componente \texttt{YaraScanDialog} costituisce l’interfaccia principale attraverso cui gli analisti configurano ed eseguono scansioni YARA sui dump di memoria. L’implementazione prevede un sistema a tab che consente di selezionare rulesets completi o regole individuali, con una validazione preventiva delle configurazioni prima dell’avvio della scansione. Il progresso viene monitorato in tempo reale tramite WebSocket, con feedback immediati sul completamento o sugli eventuali errori.
+Una volta selezionate le regole, l'utente può avviare la scansione, che viene eseguita in background tramite Celery. Al termine della scansione, l'utente viene notificato via WebSocket e può visualizzare i risultati dettagliati.
+
+Alternativamente all'esecuzione di un nuovo scan, l'utente può visualizzare i risultati dell'ultimo scan eseguito sul dump selezionato, se disponibile. Questa funzionalità permette di rivedere rapidamente i risultati senza dover rieseguire la scansione.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=1\linewidth]{images/volweb-esteso/volweb-scanview.png}
 \end{figure}
 
-\subsubsection{Visualizzazione dei Risultati delle Scansioni}
-La visualizzazione dei risultati delle scansioni YARA rappresenta un componente critico per l'efficacia dell'analisi forense. Il componente \texttt{YaraScanResults} implementa una tabella avanzata, realizzata con il componente \texttt{DataGrid} di MUI X, che permette ordinamento, paginazione e personalizzazione delle celle. Ogni riga della tabella mostra l’offset di memoria in cui è stato rilevato il match, il nome della regola YARA che ha determinato l’individuazione, il valore effettivo che ha fatto scattare la corrispondenza e la condizione che ha portato al match
+\subsubsection{Visualizzazione e Analisi dei Risultati}
+
+La presentazione dei risultati delle scansioni YARA é organizzata in una vista tabellare con funzionalità di filtering e sorting. 
+
+La tabella, per ogni match, mostra il nome della regola che ha generato il match, il valore che ha causato il match, l'offset esatto nel dump e il componente della regola che é stato attivato.
+
+É possibile eliminare i risultati dello scan corrente, che rimuove tutti i match associati al dump dal database, oppure eseguire un nuovo scan salvando i risultati appena visualizzati.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=1\linewidth]{images/volweb-esteso/volweb-scanresult.png}
+\caption{Visualizzazione stratificata dei risultati YARA con drill-down progressivo dal summary al dettaglio forense}
 \end{figure}
-
 
 \section{Semplificazioni Architetturali}
 
@@ -821,18 +269,28 @@ Parallelamente all'integrazione YARA, sono state implementate semplificazioni ar
 
 \subsection{Rimozione del Sistema di Autenticazione}
 
-L'eliminazione del layer di autenticazione rappresenta una decisione progettuale guidata dall'analisi del contesto operativo reale di VolWeb. Durante Locked Shields 2025, ogni blue team operava in un ambiente di rete completamente isolato, dove il controllo degli accessi era demandato all'infrastruttura e non all'applicazione. In questo scenario, la presenza di un sistema di autenticazione non solo introduceva overhead inutile, ma costituiva un vero e proprio punto debole sfruttabile dagli attaccanti.
+L'eliminazione del layer di autenticazione rappresenta una decisione progettuale apparentemente controintuitiva che tuttavia riflette la realtà operativa degli ambienti forensi isolati. Durante Locked Shields 2025, ogni blue team operava in un ambiente di rete completamente segregato dove il controllo degli accessi era demandato all'infrastruttura di rete piuttosto che all'applicazione.
 
-L'esperienza sul campo ha dimostrato che le password statiche o mal protette diventavano rapidamente bersagli di attacchi di brute-force e credential stuffing, compromettendo la piattaforma e annullando i benefici di una barriera applicativa. La rimozione dell'autenticazione ha portato vantaggi immediati in termini di deployment più rapido e semplice, minore complessità operativa per gli analisti e un modello architetturale semplificato. Dal punto di vista della sicurezza, questa scelta ha permesso di eliminare un'intera classe di vulnerabilità relative a password, hash e gestione dei token, riducendo drasticamente la superficie di attacco e semplificando la configurazione senza necessità di secret keys, expiration policies o meccanismi di recovery.
+L'analisi dell'utilizzo durante l'esercitazione ha rivelato pattern interessanti. I team tipicamente deployavano VolWeb su una VM isolata accessibile solo dalla rete del team. L'accesso alla rete era già protetto da VPN con autenticazione multi-fattore. All'interno del team, tutti i membri necessitavano dello stesso livello di accesso. Il tempo speso per gestire account utente e password reset durante l'esercitazione rappresentava overhead non produttivo.
+
+Ancora più critico, il sistema di autenticazione rappresentava un vettore di attacco sfruttabile. Durante le simulazioni, i red team targetizzavano specificatamente i sistemi di autenticazione delle applicazioni web.
+
+L'architettura risultante assume che VolWeb venga deployato in ambienti trusted dove la sicurezza perimetrale è già garantita. Questo modello si allinea con il principio di defense in depth, dove la sicurezza non dipende da un singolo controllo ma da layer multipli. Per deployment che richiedono autenticazione, il sistema può essere protetto attraverso reverse proxy (nginx, Apache) con autenticazione integrata, VPN con controlli di accesso basati su certificati, o network segmentation con firewall rules.
 
 \subsection{Eliminazione del Supporto Cloud Storage}
 
-La rimozione del supporto per storage cloud (S3) deriva da considerazioni sia di sicurezza che di affidabilità operativa emerse durante Locked Shields. I dump di memoria contengono per natura dati estremamente sensibili, inclusi potenziali segreti aziendali, credenziali in chiaro, e informazioni personali. L'upload di tali dati su infrastrutture cloud introduce rischi di compliance e sicurezza che molte organizzazioni non possono accettare.
+La rimozione del supporto per storage cloud deriva da considerazioni pratiche e di sicurezza emerse durante operazioni reali. L'analisi post-Locked Shields ha rivelato che zero team su 40 hanno utilizzato il cloud storage durante l'esercitazione, nonostante fosse disponibile e configurato.
 
-Durante l'esercitazione, è emerso inoltre che i servizi cloud rappresentavano spesso target primari per gli attacchi del red team. Affidarsi a storage cloud per evidenze forensi critiche introduce un single point of failure inaccettabile: proprio nel momento di maggior necessità durante un incident, l'infrastruttura cloud potrebbe essere compromessa, sotto attacco DDoS, o semplicemente non raggiungibile a causa di problemi di rete. 
+Le ragioni per il non-utilizzo erano molteplici. Dal punto di vista della sicurezza, i dump di memoria contengono inevitabilmente dati estremamente sensibili. L'upload automatico di tali dati su infrastrutture cloud viola multiple normative di compliance, GDPR per dati personali EU, HIPAA per informazioni sanitarie, PCI-DSS per dati di pagamento, e classificazioni governative per informazioni sensibili.
 
-La scelta di mantenere tutto lo storage locale garantisce che le evidenze rimangano sempre sotto il controllo diretto dell'organizzazione, accessibili anche in caso di isolamento completo della rete. Questo approccio si allinea con i principi di resilienza operativa essenziali per tool di incident response, dove la disponibilità delle evidenze non può dipendere da fattori esterni. L'eliminazione del supporto cloud ha inoltre semplificato significativamente l'architettura, rimuovendo la necessità di gestire credenziali AWS, implementare logiche di retry per operazioni di rete, o gestire la sincronizzazione tra storage locale e remoto.
+Dal punto di vista operativo, la dipendenza da servizi cloud introduceva failure points inaccettabili. Durante Locked Shields, i servizi cloud simulati erano tra i primi target degli attacchi red team. In uno scenario reale di incident response, questi problemi sarebbero ancora più critici quando l'infrastruttura aziendale è sotto attacco.
 
-Le espansioni presentate in questo capitolo trasformano VolWeb da una piattaforma di visualizzazione a uno strumento completo per l'analisi forense avanzata. L'integrazione di YARA colma il gap più critico identificato durante Locked Shields 2025, mentre le semplificazioni architetturali garantiscono che la piattaforma rimanga accessibile e resiliente anche nei contesti operativi più impegnativi. 
+Le considerazioni di performance hanno ulteriormente supportato la decisione. L'upload di dump da 20-64 GB su connessioni internet standard richiedeva ore. Il download per analisi introduceva latenza significativa. I costi di storage e bandwidth per dump multipli diventavano rapidamente proibitivi. La sincronizzazione tra storage locale e cloud aggiungeva complessità senza valore evidente.
 
-Tuttavia, l'implementazione di nuove funzionalità richiede una validazione rigorosa per garantirne l'efficacia in contesti operativi reali. Il prossimo capitolo presenta i risultati della sperimentazione sul campo, analizzando le performance della piattaforma estesa e la sua applicabilità in scenari di incident response concreti.
+L'implementazione della rimozione ha richiesto un refactoring significativo ma ha prodotto un'architettura più semplice e robusta. 
+
+Le espansioni presentate in questo capitolo trasformano VolWeb da una piattaforma di visualizzazione a uno strumento completo per l'analisi forense avanzata. L'integrazione di YARA colma il gap più critico identificato durante Locked Shields 2025, fornendo capacità di pattern matching e threat hunting precedentemente assenti. Le semplificazioni architetturali garantiscono che la piattaforma rimanga accessibile e resiliente anche nei contesti operativi più impegnativi, rimuovendo complessità non necessaria e potenziali punti di failure.
+
+L'implementazione dettagliata, comprensiva di tutto il codice sorgente, è disponibile nel repository GitHub del progetto, come documentato nell'Appendice A.
+
+Il capitolo successivo discuterà i test di validazione eseguiti per garantire che le nuove funzionalità soddisfino i requisiti definiti, seguiti da una valutazione complessiva dell'impatto delle espansioni sulla piattaforma VolWeb.

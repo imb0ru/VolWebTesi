@@ -177,6 +177,7 @@ Gli endpoint principali includono la gestione dei casi con creazione, modifica e
 La sicurezza in VolWeb è implementata a più livelli, partendo da un robusto sistema di autenticazione basato sul framework di Django. Gli utenti devono autenticarsi per accedere a qualsiasi funzionalità, e le sessioni sono gestite in modo sicuro con token che scadono dopo un periodo di inattività configurabile.
 
 Il sistema di autorizzazione implementa un modello di permessi granulare. Gli utenti possono avere ruoli diversi con capacità appropriate: amministratori con accesso completo, analisti con capacità di creare e gestire casi, e viewer con accesso in sola lettura. A livello di caso, è possibile definire permessi specifici, permettendo la condivisione selettiva di investigazioni tra team diversi mantenendo la segregazione di informazioni sensibili.
+
 \section{Limitazioni e Considerazioni}
 
 Nonostante le capacità significative, la versione originale di VolWeb presenta alcune limitazioni importanti. L'assenza di supporto per YARA rappresenta probabilmente la mancanza più significativa, limitando le capacità di threat hunting della piattaforma. Questa limitazione impedisce l'implementazione di capacità di pattern matching avanzate necessarie per identificare minacce custom o varianti di malware conosciuti, una funzionalità critica in contesti operativi moderni dove le minacce evolvono rapidamente.
